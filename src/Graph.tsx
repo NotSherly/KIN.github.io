@@ -13,7 +13,7 @@ import {
   type Node,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { kindNames, person, type Edge } from "./model";
+import { kindNames, person, shared, type Edge } from "./model";
 
 type PersonNode = Node<
   {
@@ -99,6 +99,7 @@ export default function Graph({
   onSelect,
   path = false,
   candidate = false,
+  selected,
 }: {
   ids: string[];
   edges: Edge[];
@@ -107,6 +108,7 @@ export default function Graph({
   onSelect?: (id: string) => void;
   path?: boolean;
   candidate?: boolean;
+  selected?: string;
 }) {
   const [instance, setInstance] =
     useState<ReactFlowInstance<PersonNode> | null>(null);
@@ -148,6 +150,7 @@ export default function Graph({
                 };
         return {
           id,
+          selected: selected === id,
           type: "person",
           position,
           data: {
@@ -160,7 +163,7 @@ export default function Graph({
           ariaLabel: `${p.name}，${p.role}，点击展开关系`,
         };
       }),
-    [key, actor, expanded.join(","), path, width],
+    [key, actor, expanded.join(","), path, width, selected],
   );
   useEffect(() => {
     const timer = setTimeout(
@@ -188,7 +191,7 @@ export default function Graph({
       const target = nodes.find((n) => n.id === e.b)!.position;
       const label = candidate
         ? "候选 · 未确认"
-        : `${kindNames[e.kind]}${e.objective ? " · 客观" : ""}`;
+        : `${kindNames[e.kind]}${e.objective ? " · 客观" : ""}${!shared(e) ? " · 私人" : ""}`;
       const dx = target.x - source.x,
         dy = target.y - source.y,
         length = Math.hypot(dx, dy) || 1;
@@ -244,7 +247,7 @@ export default function Graph({
                 ? "#6c8dda"
                 : "#9880d9",
           strokeWidth: path ? 3 : 2,
-          strokeDasharray: candidate ? "5 6" : undefined,
+          strokeDasharray: candidate ? "5 6" : !shared(e) ? "2 4" : undefined,
           opacity: e.fadedBy.some((id) => id === actor) ? 0.32 : 1,
         },
         labelStyle: { fill: "#726b8d", fontSize: 12 },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Network,
   ScanLine,
@@ -14,11 +14,10 @@ import {
   Check,
   CircleHelp,
   LockKeyhole,
-  Radio,
   Users,
-  Clock3,
 } from "lucide-react";
-import Graph from "./Graph";
+import PersonalNetwork from "./PersonalNetwork";
+import ExperienceGuide from "./ExperienceGuide";
 import {
   people,
   person,
@@ -26,7 +25,6 @@ import {
   decodeState,
   STORAGE_KEY,
   personalGraph,
-  findPath,
   requestClaim,
   respondClaim,
   changeRelation,
@@ -35,12 +33,13 @@ import {
   shared,
   edgeLayer,
   kindNames,
-  type Scope,
   type State,
   type Kind,
   type Layer,
   type Edge,
 } from "./model";
+
+const TapExperience = lazy(() => import("./TapExperience"));
 
 const tabs = [
   { id: "graph", name: "个人谱系", icon: Network },
@@ -55,11 +54,6 @@ const layerNames: Record<Layer, string> = {
   private: "私人谱系",
   candidate: "候选谱系",
 };
-const initialScope = (): Scope => ({
-  types: ["family", "friend", "colleague"],
-  depth: 3,
-  consent: true,
-});
 function readTab(): Tab {
   const hash = location.hash.slice(1);
   return tabs.some((t) => t.id === hash) ? (hash as Tab) : "graph";
@@ -70,66 +64,6 @@ function Avatar({ id, size = "" }: { id: string; size?: string }) {
     <span className={`avatar ${size}`} style={{ background: p.color }}>
       {p.name.slice(-2)}
     </span>
-  );
-}
-function ScopePicker({
-  id,
-  title,
-  value,
-  onChange,
-}: {
-  id: string;
-  title: string;
-  value: Scope;
-  onChange: (value: Scope) => void;
-}) {
-  return (
-    <fieldset className="scope">
-      <legend>{title}</legend>
-      <div className="flex flex-wrap gap-2">
-        {(Object.keys(kindNames) as Kind[]).map((type) => (
-          <label className="choice" key={type}>
-            <input
-              type="checkbox"
-              checked={value.types.includes(type)}
-              onChange={() =>
-                onChange({
-                  ...value,
-                  types: value.types.includes(type)
-                    ? value.types.filter((t) => t !== type)
-                    : [...value.types, type],
-                })
-              }
-            />
-            {kindNames[type]}
-          </label>
-        ))}
-      </div>
-      <label className="field mt-4" htmlFor={`${id}-depth`}>
-        最多共享几层
-        <select
-          id={`${id}-depth`}
-          value={value.depth}
-          onChange={(e) =>
-            onChange({ ...value, depth: Number(e.target.value) })
-          }
-        >
-          {[1, 2, 3, 4, 5].map((n) => (
-            <option key={n} value={n}>
-              {n} 层
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="consent">
-        <input
-          type="checkbox"
-          checked={value.consent}
-          onChange={(e) => onChange({ ...value, consent: e.target.checked })}
-        />
-        同意本次临时共享
-      </label>
-    </fieldset>
   );
 }
 export default function App() {
@@ -146,16 +80,7 @@ export default function App() {
   const [layer, setLayer] = useState<Layer>("all");
   const [selected, setSelected] = useState("lin");
   const [expanded, setExpanded] = useState(["lin"]);
-  const [target, setTarget] = useState("chen");
-  const [scopeA, setScopeA] = useState(initialScope);
-  const [scopeB, setScopeB] = useState(initialScope);
-  const [result, setResult] = useState<ReturnType<typeof findPath> | null>(
-    null,
-  );
-  const [expires, setExpires] = useState<number | null>(null);
-  const [expired, setExpired] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  const [reveal, setReveal] = useState(1);
+  const [tapVersion, setTapVersion] = useState(0);
   const [claimTo, setClaimTo] = useState("chen");
   const [claimKind, setClaimKind] = useState<Kind>("friend");
   const [claimShare, setClaimShare] = useState(false);
@@ -176,25 +101,6 @@ export default function App() {
     return () => window.removeEventListener("hashchange", listener);
   }, []);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  useEffect(() => {
-    if (expires && now >= expires) {
-      setResult(null);
-      setExpires(null);
-      setExpired(true);
-    }
-  }, [now, expires]);
-  useEffect(() => {
-    if (result?.status !== "found") return;
-    const timer = setInterval(
-      () => setReveal((n) => Math.min(result.ids.length, n + 1)),
-      430,
-    );
-    return () => clearInterval(timer);
-  }, [result]);
-  useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(""), 5500);
     return () => clearTimeout(timer);
@@ -202,19 +108,17 @@ export default function App() {
   function navigate(t: Tab) {
     location.hash = t;
     setTab(t);
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
   function clearSession() {
-    setResult(null);
-    setExpires(null);
-    setExpired(false);
-    setReveal(1);
+    setTapVersion((version) => version + 1);
   }
   function switchActor(id: string) {
+    setNotice("");
     setActor(id);
     setSelected(id);
     setExpanded([id]);
     setLayer("all");
-    setTarget(id === "chen" ? "lin" : "chen");
     setClaimTo(id === "chen" ? "lin" : "chen");
     setAcceptShare({});
     clearSession();
@@ -256,11 +160,21 @@ export default function App() {
     fadedBy: [],
   }));
   const direct = own.find((e) => touches(e, selected));
-  function selectNode(id: string) {
+  const selectNode = useCallback((id: string) => {
     setSelected(id);
     if (layer !== "candidate")
       setExpanded((prev) => [...new Set([...prev, id])]);
+  }, [layer]);
+  function collapseBranch(id: string) {
+    const next = expanded.filter((item) => item !== id);
+    const visible = personalGraph(state, actor, next, layer).ids;
+    setExpanded(next.filter((item) => visible.includes(item)));
+    setSelected(id);
   }
+  const visibleIds = layer === "candidate" ? [actor, ...candidates.map((p) => p.id)] : graph.ids;
+  useEffect(() => {
+    if (!visibleIds.includes(selected)) setSelected(actor);
+  }, [visibleIds.join(","), selected, actor]);
   function lifecycle(edge: Edge, action: Parameters<typeof changeRelation>[3]) {
     update(
       changeRelation(state, actor, edge.id, action),
@@ -269,14 +183,6 @@ export default function App() {
         : "已更新自己的关系设置。",
     );
   }
-  const routeClaimExists =
-    own.some((e) => touches(e, target)) ||
-    state.claims.some(
-      (c) =>
-        c.status === "pending" &&
-        [c.from, c.to].includes(actor as Edge["a"]) &&
-        [c.from, c.to].includes(target as Edge["a"]),
-    );
 
   return (
     <div className="app-shell">
@@ -394,6 +300,8 @@ export default function App() {
             )}
           </div>
 
+          <ExperienceGuide current={tab} onNavigate={navigate} />
+
           {tab === "graph" && (
             <>
               <div className="stats-grid">
@@ -445,17 +353,6 @@ export default function App() {
                           : "点击人物节点，继续展开其获授权的连接。"}
                       </p>
                     </div>
-                    <button
-                      className="icon-button"
-                      aria-label="收起到第一层"
-                      title="收起到第一层"
-                      onClick={() => {
-                        setExpanded([actor]);
-                        setSelected(actor);
-                      }}
-                    >
-                      <RotateCcw size={17} />
-                    </button>
                   </div>
                   <div className="layer-tabs" aria-label="谱系层级">
                     {(Object.keys(layerNames) as Layer[]).map((l) => (
@@ -466,34 +363,21 @@ export default function App() {
                         onClick={() => {
                           setLayer(l);
                           setSelected(actor);
+                          setExpanded([actor]);
                         }}
                       >
                         {layerNames[l]}
                       </button>
                     ))}
                   </div>
-                  <div className="network-canvas">
-                    <Graph
-                      ids={
-                        layer === "candidate"
-                          ? [actor, ...candidates.map((p) => p.id)]
-                          : graph.ids
-                      }
-                      edges={
-                        layer === "candidate" ? candidateEdges : graph.edges
-                      }
-                      actor={actor}
-                      expanded={expanded}
-                      onSelect={selectNode}
-                      candidate={layer === "candidate"}
-                    />
-                    <div className="canvas-caption">
-                      <Radio size={14} />
-                      {layer === "candidate"
-                        ? `${candidates.length} 位候选 · 尚未建立关系`
-                        : `${graph.ids.length} 位可见人物 · 逐层授权展开`}
-                    </div>
-                  </div>
+                  <PersonalNetwork
+                    ids={visibleIds}
+                    edges={layer === "candidate" ? candidateEdges : graph.edges}
+                    actor={actor} selected={selected} expanded={expanded}
+                    onSelect={selectNode} onCollapse={collapseBranch}
+                    candidate={layer === "candidate"}
+                    onReset={() => { setExpanded([actor]); setSelected(actor); }}
+                  />
                   <div className="graph-legend">
                     <span>
                       <i className="dot blue-dot" />
@@ -507,7 +391,7 @@ export default function App() {
                       <i className="dash" />
                       候选推荐
                     </span>
-                    <span className="ml-auto">滚轮缩放 · 拖动画布</span>
+                    <span><i className="private-line" />私人直连</span>
                   </div>
                 </section>
                 <aside className="detail-panel">
@@ -605,158 +489,23 @@ export default function App() {
           )}
 
           {tab === "tap" && (
-            <div className="tap-layout">
-              <section className="card tap-controls">
-                <div className="section-kicker">
-                  <ScanLine size={19} />
-                  建立临时共享
-                </div>
-                <label className="field mt-5">
-                  另一位模拟用户
-                  <select
-                    aria-label="碰一碰对象"
-                    value={target}
-                    onChange={(e) => {
-                      setTarget(e.target.value);
-                      clearSession();
-                    }}
-                  >
-                    {people
-                      .filter((p) => p.id !== actor)
-                      .map((p) => (
-                        <option value={p.id} key={p.id}>
-                          {p.name}
-                          {p.id === "su" ? "（独立节点）" : ""}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <ScopePicker
-                  id="mine"
-                  title={`${person(actor).name}的选择`}
-                  value={scopeA}
-                  onChange={(s) => {
-                    setScopeA(s);
-                    clearSession();
-                  }}
-                />
-                <ScopePicker
-                  id="theirs"
-                  title={`${person(target).name}的选择（模拟对方）`}
-                  value={scopeB}
-                  onChange={(s) => {
-                    setScopeB(s);
-                    clearSession();
-                  }}
-                />
-                <p className="scope-explanation">
-                  仅使用类型交集；较小层数为本次路径上限。每条边还需原关系双方授权。候选和已退出关系均不可参与。
-                </p>
-                <button
-                  className="primary w-full"
-                  onClick={() => {
-                    setReveal(1);
-                    setExpired(false);
-                    setResult(findPath(state, actor, target, scopeA, scopeB));
-                    setExpires(Date.now() + 120000);
-                    setNow(Date.now());
-                  }}
-                >
-                  <ScanLine size={18} />
-                  开始模拟碰一碰
-                </button>
-              </section>
-              <section className="graph-card session-card">
-                <div className="graph-heading">
-                  <div>
-                    <h2>这一次，我们如何相连？</h2>
-                    <p>临时会话不会合并任何人的个人谱系。</p>
-                  </div>
-                  {expires && (
-                    <span className="timer">
-                      <Clock3 size={15} />
-                      {Math.max(0, Math.ceil((expires - now) / 1000))} 秒
-                    </span>
-                  )}
-                </div>
-                {result?.status === "found" ? (
-                  <>
-                    <div className="result-banner">
-                      <Check size={18} />
-                      发现 {result.edges.length} 层可见路径
-                      <span>系统推导，未经双方直接确认</span>
-                    </div>
-                    <div className="session-graph">
-                      <Graph
-                        ids={result.ids.slice(0, reveal)}
-                        edges={result.edges}
-                        actor={actor}
-                        path
-                      />
-                    </div>
-                    <div className="path-text">
-                      {result.ids.map((id) => person(id).name).join(" → ")}
-                    </div>
-                    <div className="session-actions">
-                      <button
-                        className="primary"
-                        disabled={routeClaimExists}
-                        onClick={() => {
-                          setClaimTo(target);
-                          navigate("relations");
-                        }}
-                      >
-                        {routeClaimExists
-                          ? "已有直接关系或待处理申请"
-                          : "可选：申请直接关系认领"}
-                      </button>
-                      <button className="secondary" onClick={clearSession}>
-                        结束临时共享
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="empty-state">
-                    <div
-                      className={`empty-orbit ${result || expired ? "quiet" : ""}`}
-                    >
-                      <ScanLine size={38} />
-                    </div>
-                    <h2>
-                      {expired
-                        ? "临时共享已到期"
-                        : result?.status === "rejected"
-                          ? "对方或你已拒绝授权"
-                          : result?.status === "no-path"
-                            ? "当前授权范围内没有可见路径"
-                            : "一个动作，打开一次相遇。"}
-                    </h2>
-                    <p>
-                      {expired
-                        ? "会话数据已清除，双方返回各自谱系。"
-                        : result?.status === "rejected"
-                          ? "没有计算或展示任何关系路径。修改双方选择后可重新尝试。"
-                          : result?.status === "no-path"
-                            ? "这不代表没有关系。可以调整双方共享类型与层数；系统不会猜测隐藏的关系。"
-                            : "选择一位虚构用户，再分别设置双方愿意临时共享的范围。"}
-                    </p>
-                    {result && (
-                      <button className="secondary" onClick={clearSession}>
-                        结束会话
-                      </button>
-                    )}
-                    <span className="empty-footnote">
-                      <LockKeyhole size={14} />
-                      临时授权 · 两分钟到期 · 随时结束
-                    </span>
-                  </div>
-                )}
-              </section>
-            </div>
+            <Suspense fallback={<div className="card" role="status">正在准备碰一碰体验…</div>}>
+              <TapExperience
+                key={`${actor}-${tapVersion}`}
+                actor={actor}
+                state={state}
+                onClaim={(id) => { setClaimTo(id); navigate("relations"); }}
+              />
+            </Suspense>
           )}
 
           {tab === "relations" && (
             <>
+              <div className="relationship-intro">
+                <ShieldCheck size={20} />
+                <p><strong>发现路径之后，关系仍由彼此决定。</strong><span>申请、接受和各自的隐私授权，分别由对应的人操作。</span></p>
+                {actor !== "lin" && <button className="secondary" onClick={() => switchActor("lin")}>回到林知夏<ArrowRight size={14} /></button>}
+              </div>
               <section className="card claim-form">
                 <div>
                   <h2>发起关系认领</h2>
@@ -905,6 +654,9 @@ export default function App() {
                               }[c.status]
                             }
                           </span>
+                          {c.status === "pending" && (
+                            <button className="secondary respond-as" onClick={() => switchActor(c.to)}>切换为对方并回应<ArrowRight size={14} /></button>
+                          )}
                         </div>
                       ))
                   )}
@@ -1004,6 +756,7 @@ export default function App() {
                   <History size={38} />
                   <h3>故事，正在开始。</h3>
                   <p>确认、拒绝、淡化、权限变更和退出都会记录在这里。</p>
+                  <button className="secondary" onClick={() => navigate("relations")}>去体验关系管理<ArrowRight size={15} /></button>
                 </div>
               ) : (
                 <ol className="timeline">
@@ -1019,6 +772,11 @@ export default function App() {
               )}
             </section>
           )}
+          <details className="concept-note">
+            <summary>关于《谱系 KIN》与这次设计</summary>
+            <p>构想来自对福建宗族生活与传统族谱的观察：如果关系网络由每个人共同参与建立，我们该怎样发现连接，又怎样保留各自的边界？这个网页用虚构人物演示探索、临时共享、双方确认与关系变化。</p>
+            <p>创作中，AI 协助梳理流程、对比方案和实现网页；构想与关键设计取舍由作者提出和判断。网页中的路径搜索只依据已授权的连接，不会自动定义或确认人与人的关系。</p>
+          </details>
           <footer>
             <span>全部人物与关系均为虚构，仅用于课程交互演示。</span>
             <span>算法只能发现连接，不能定义关系。</span>

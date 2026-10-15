@@ -57,9 +57,81 @@ export const people = [
     color: "#5c8fa8",
     bio: "一个独立的模拟用户，适合演示无路径场景。",
   },
+  {
+    id: "fang", name: "林砚秋", role: "地方志编辑", color: "#648c9c",
+    bio: "在旧照片和口述故事里整理家族的记忆。",
+  },
+  {
+    id: "qiao", name: "乔映山", role: "生态摄影师", color: "#669b87",
+    bio: "与林书禾一起记录山间的植物与四季。",
+  },
+  {
+    id: "ning", name: "林予宁", role: "历史系学生", color: "#7e9d92",
+    bio: "跟随林砚秋走访老屋，收集地方故事。",
+  },
+  {
+    id: "bai", name: "白清和", role: "诗歌译者", color: "#b49377",
+    bio: "在书店的小型读书会上分享自己的译作。",
+  },
+  {
+    id: "ye", name: "叶书行", role: "独立出版人", color: "#b29966",
+    bio: "和何听澜一起策划主题书展与阅读活动。",
+  },
+  {
+    id: "meng", name: "孟时雨", role: "动画设计师", color: "#698bc4",
+    bio: "与周予安交换速写，把日常片段做成动画。",
+  },
+  {
+    id: "gu", name: "顾澄", role: "视觉设计师", color: "#8b82ba",
+    bio: "在合作项目中认识周予安，喜欢研究书籍装帧。",
+  },
+  {
+    id: "ji", name: "纪南音", role: "声音采集者", color: "#8a91bf",
+    bio: "与朋友记录街巷里的声音，也举办小型聆听会。",
+  },
+  {
+    id: "wei", name: "卫川", role: "展陈设计师", color: "#ae82a6",
+    bio: "与陈见川共同布置社区展览，让故事被更多人看见。",
+  },
+  {
+    id: "jiang", name: "江予白", role: "社区志愿者", color: "#bd8799",
+    bio: "通过一次邻里展览，与陈见川成为朋友。",
+  },
+  {
+    id: "cheng", name: "程望", role: "城市研究员", color: "#9a89ba",
+    bio: "与许星遥一起观察老街中的公共空间。",
+  },
+  {
+    id: "tang", name: "唐以宁", role: "交互设计师", color: "#717fc0",
+    bio: "与林知夏在一个社区设计项目中合作。",
+  },
+  {
+    id: "wen", name: "温栖", role: "产品研究员", color: "#688fae",
+    bio: "与唐以宁一起走访用户，记录日常生活中的细节。",
+  },
+  {
+    id: "song", name: "宋予澄", role: "公共艺术创作者", color: "#828cbd",
+    bio: "和唐以宁在工作之外讨论城市里的小型艺术计划。",
+  },
+  {
+    id: "liao", name: "廖行舟", role: "服务设计师", color: "#789eb0",
+    bio: "与温栖共同整理社区调研中的发现。",
+  },
+  {
+    id: "shao", name: "邵雨桐", role: "陶艺工作者", color: "#a28aaf",
+    bio: "在宋予澄组织的创作活动里认识了新朋友。",
+  },
+  {
+    id: "lu", name: "陆青禾", role: "信息设计师", color: "#889cb9",
+    bio: "与唐以宁合作，把复杂的信息整理成容易理解的图形。",
+  },
 ];
 export const person = (id: string) => people.find((p) => p.id === id)!;
-const personId = z.enum(["lin", "zhou", "chen", "lin2", "xu", "he", "su"]);
+const personId = z.enum([
+  "lin", "zhou", "chen", "lin2", "xu", "he", "su",
+  "fang", "qiao", "ning", "bai", "ye", "meng", "gu", "ji",
+  "wei", "jiang", "cheng", "tang", "wen", "song", "liao", "shao", "lu",
+]);
 const kindSchema = z.enum(["family", "friend", "colleague"]);
 const edgeSchema = z.object({
   id: z.string(),
@@ -124,6 +196,23 @@ export function seed(): State {
       edge("e4", "chen", "xu", "friend"),
       edge("e5", "lin2", "he", "friend"),
       edge("e6", "lin", "he", "friend", false, false),
+      edge("demo-family-1", "lin2", "fang", "family", true),
+      edge("demo-family-2", "lin2", "qiao", "colleague"),
+      edge("demo-family-3", "fang", "ning", "family", true),
+      edge("demo-books-1", "he", "bai", "friend"),
+      edge("demo-books-2", "he", "ye", "colleague"),
+      edge("demo-friends-1", "zhou", "meng", "friend"),
+      edge("demo-friends-2", "zhou", "gu", "colleague"),
+      edge("demo-friends-3", "zhou", "ji", "friend"),
+      edge("demo-friends-4", "chen", "wei", "colleague"),
+      edge("demo-friends-5", "chen", "jiang", "friend"),
+      edge("demo-friends-6", "xu", "cheng", "colleague"),
+      edge("demo-work-1", "lin", "tang", "colleague"),
+      edge("demo-work-2", "tang", "wen", "colleague"),
+      edge("demo-work-3", "tang", "song", "friend"),
+      edge("demo-work-4", "tang", "lu", "colleague"),
+      edge("demo-work-5", "wen", "liao", "colleague"),
+      edge("demo-work-6", "song", "shao", "friend"),
     ],
     claims: [],
     history: [],
@@ -332,7 +421,11 @@ export function changeRelation(
 export const STORAGE_KEY = "kin-demo-v1";
 export function decodeState(raw: string | null): State {
   try {
-    return stateSchema.parse(JSON.parse(raw ?? "null"));
+    const saved = stateSchema.parse(JSON.parse(raw ?? "null"));
+    // Add only new sample edges; never replace saved privacy, exit, claim or history data.
+    const known = new Set(saved.edges.map((edge) => edge.id));
+    const additions = seed().edges.filter((edge) => edge.id.startsWith("demo-") && !known.has(edge.id));
+    return additions.length ? { ...saved, edges: [...saved.edges, ...additions] } : saved;
   } catch {
     return seed();
   }

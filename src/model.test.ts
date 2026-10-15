@@ -29,7 +29,7 @@ describe("授权与逐层展开", () => {
     const route = findPath(s, "lin", "chen", scope, scope);
     expect(route.status).toBe("found");
     expect(route.ids).toEqual(["lin", "zhou", "chen"]);
-    expect(s.edges).toHaveLength(6);
+    expect(s.edges).toHaveLength(seed().edges.length);
   });
   it("较小层数限制与类型交集都生效", () => {
     expect(
@@ -84,7 +84,7 @@ describe("授权与逐层展开", () => {
 describe("关系认领", () => {
   it("申请不改变关系，发起方不能替对方接受", () => {
     const s = requestClaim(seed(), "lin", "chen", "friend", false);
-    expect(s.edges).toHaveLength(6);
+    expect(s.edges).toHaveLength(seed().edges.length);
     expect(s.claims[0].status).toBe("pending");
     expect(respondClaim(s, "lin", s.claims[0].id, true, true)).toBe(s);
   });
@@ -97,7 +97,7 @@ describe("关系认领", () => {
       true,
       true,
     );
-    expect(accepted.edges).toHaveLength(7);
+    expect(accepted.edges).toHaveLength(seed().edges.length + 1);
     expect(accepted.edges.at(-1)?.origin).toBe("confirmed");
     expect(shared(accepted.edges.at(-1)!)).toBe(false);
     expect(findPath(accepted, "lin", "chen", scope, scope).edges).toHaveLength(
@@ -107,7 +107,7 @@ describe("关系认领", () => {
   it("拒绝不会建立关系，重复回应无效", () => {
     const s = requestClaim(seed(), "lin", "su", "friend", true);
     const rejected = respondClaim(s, "su", s.claims[0].id, false, false);
-    expect(rejected.edges).toHaveLength(6);
+    expect(rejected.edges).toHaveLength(seed().edges.length);
     expect(rejected.claims[0].status).toBe("rejected");
     expect(respondClaim(rejected, "su", s.claims[0].id, true, true)).toBe(
       rejected,
@@ -154,5 +154,20 @@ describe("生命周期与保存", () => {
     expect(decodeState(JSON.stringify(s))).toEqual(s);
     expect(decodeState("{bad")).toEqual(seed());
     expect(decodeState('{"version":999}')).toEqual(seed());
+  });
+  it("旧演示补入新分支，保留私密、退出、认领和历史，重复读取不重复添加", () => {
+    const original = seed();
+    original.edges = original.edges.filter((edge) => !edge.id.startsWith("demo-"));
+    const privateState = changeRelation(original, "lin", "e2", "private");
+    const exited = changeRelation(privateState, "lin", "e6", "exit");
+    const pending = requestClaim(exited, "lin", "chen", "friend", false);
+    const migrated = decodeState(JSON.stringify(pending));
+    expect(migrated.edges).toHaveLength(seed().edges.length);
+    expect(migrated.edges.find((edge) => edge.id === "e2")?.share.lin).toBe(false);
+    expect(migrated.edges.find((edge) => edge.id === "e6")?.status).toBe("exited");
+    expect(migrated.claims).toEqual(pending.claims);
+    expect(migrated.history).toEqual(pending.history);
+    const changed = changeRelation(migrated, "lin", "demo-work-1", "exit");
+    expect(decodeState(JSON.stringify(changed))).toEqual(changed);
   });
 });
